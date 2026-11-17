@@ -99,6 +99,24 @@ async function uploadRelatives() {
 // --------------------------------------------------------------------------- //
 // 渲染当前数据
 // --------------------------------------------------------------------------- //
+function demoScenarioLoaded() {
+  if (!currentState?.demo) return false;
+  const def = currentState.demo;
+  const parsePairs = (csv) => csv.trim().split("\n").slice(1)
+    .map((line) => line.split(",").map((s) => s.trim()).filter(Boolean))
+    .filter((p) => p.length >= 2)
+    .map((p) => [p[0], p[1]].sort().join("|")).sort();
+  const demoCases = def.cases_csv.trim().split("\n").slice(1)
+    .map((line) => line.split(",")[0].trim()).sort();
+  const currentCases = currentState.input.cases.map((c) => c.case_id).sort();
+  const demoRels = parsePairs(def.relatives_csv);
+  const currentRels = currentState.input.relatives
+    .map((r) => [r.patient_a, r.patient_b].sort().join("|")).sort();
+  return currentCases.length > 0 &&
+    JSON.stringify(currentCases) === JSON.stringify(demoCases) &&
+    JSON.stringify(currentRels) === JSON.stringify(demoRels);
+}
+
 function renderState() {
   const version = currentState.dataset_version;
   const input = currentState.input;
@@ -122,6 +140,15 @@ function renderState() {
   $("caseTable").querySelector("tbody").innerHTML = input.cases
     .map((c) => `<tr><td>${escapeHtml(c.case_id)}</td><td>${escapeHtml(c.patient_id)}</td><td>${c.label}</td></tr>`)
     .join("");
+
+  if (currentState.demo) {
+    const def = currentState.demo;
+    $("demoFixBtn").classList.toggle("hidden", !demoScenarioLoaded());
+    $("demoFixBtnSolve").classList.toggle("hidden", !demoScenarioLoaded());
+    $("demoDesc").textContent =
+      `${def.description} 先点“载入演示数据”，页面会自动求解并展示无解解释；` +
+      "再点“应用更正”（仅保留 B–C 亲属对），会自动重新求解并展示可行切分。";
+  }
 
   $("relCount").textContent = input.relatives.length;
   $("relTable").querySelector("tbody").innerHTML = input.relatives
@@ -210,6 +237,58 @@ async function saveLocks() {
 }
 
 // --------------------------------------------------------------------------- //
+// 演示：载入已知无解场景，再演示更正后重新求解
+// --------------------------------------------------------------------------- //
+async function loadDemo() {
+  setMsg("demoMsg", "正在写入演示数据…");
+  try {
+    const def = currentState?.demo;
+    if (!def) throw new Error("演示定义不可用，请刷新页面后重试");
+    const casesBlob = new Blob([def.cases_csv], { type: "text/csv" });
+    const fdCases = new FormData();
+    fdCases.append("file", new File([casesBlob], "demo_cases.csv", { type: "text/csv" }));
+    await api("/api/upload/cases", { method: "POST", body: fdCases });
+
+    const fdRel = new FormData();
+    fdRel.append("file", new File([new Blob([def.relatives_csv], { type: "text/csv" })],
+      "demo_relatives.csv", { type: "text/csv" }));
+    await api("/api/upload/relatives", { method: "POST", body: fdRel });
+
+    await api("/api/quotas", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(def.quotas),
+    });
+    await api("/api/locks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locks: def.locks }),
+    });
+    await refreshAll();
+    $("demoFixBtn").classList.remove("hidden");
+    setMsg("demoMsg", "演示数据已载入，正在求解以展示无解解释…", true);
+    document.querySelector('.tab[data-tab="solve"]').click();
+    await runSolve();
+  } catch (err) { setMsg("demoMsg", err.message); }
+}
+
+async function applyDemoFix() {
+  try {
+    const def = currentState?.demo;
+    if (!def) throw new Error("演示定义不可用，请刷新页面后重试");
+    const fd = new FormData();
+    fd.append("file", new File([new Blob([def.relatives_after_fix_csv], { type: "text/csv" })],
+      "demo_relatives_fixed.csv", { type: "text/csv" }));
+    await api("/api/upload/relatives", { method: "POST", body: fd });
+    await refreshAll();
+    $("demoFixBtn").classList.add("hidden");
+    setMsg("demoMsg", "已更正亲属关系（仅保留 B–C）。旧预览/清单已失效，正在重新求解…", true);
+    document.querySelector('.tab[data-tab="solve"]').click();
+    await runSolve();
+  } catch (err) { setMsg("demoMsg", err.message); }
+}
+
+// --------------------------------------------------------------------------- //
 // 求解
 // --------------------------------------------------------------------------- //
 async function runSolve() {
@@ -239,6 +318,23 @@ function previewIsStale() {
   return !lastPreview || lastPreview.version !== currentVersion;
 }
 
+function formatDetail(c) {
+  const d = c.detail || {};
+  if (c.kind === "kinship" && d.reason === "relative") {
+    return `患者对：${d.patient_a}–${d.patient_b}；病例：${d.case_a} ↔ ${d.case_b}`;
+  }
+  if (c.kind === "kinship" && d.reason === "same_patient") {
+    return `患者：${d.patient_id}；病例：${(d.case_ids || []).join("、")}`;
+  }
+  if (c.kind === "lock") {
+    return `病例：${d.case_id}；锁定：${d.group === 1 ? "训练集" : "评估集"}`;
+  }
+  if (c.kind === "quota") {
+    return `组 ${d.group}；标签 ${d.label}；配额 ${d.target}`;
+  }
+  return JSON.stringify(d);
+}
+
 function renderSolveResult() {
   if (!lastPreview) return;
   const { result } = lastPreview;
@@ -259,13 +355,22 @@ function renderSolveResult() {
   } else {
     $("satBox").classList.add("hidden");
     $("unsatBox").classList.remove("hidden");
+    const verified = result.mus_verified === true;
     $("unsatSummary").textContent = result.summary;
+    $("unsatSummary").className = "banner " + (verified ? "warn" : "err");
+    $("demoFixBtnSolve").classList.toggle("hidden", !demoScenarioLoaded());
+    $("unsatHint").textContent = verified
+      ? "以下每条约束都是导致无解的必要条件：所列条件整体不可满足，且删除其中任意一条后，其余所列条件即可满足。"
+      : "以下仅为候选冲突条件，未能完成不可再缩减核验，请勿将其视为已验证的冲突集。";
+    $("unsatVerify").innerHTML = verified
+      ? `<span class="pill ok">已独立核验：整体无解且逐条不可删除</span>`
+      : `<span class="pill dead">未验证${result.verification_error ? "：" + escapeHtml(result.verification_error) : ""}</span>`;
     $("conflictTable").querySelector("tbody").innerHTML = result.conflicts
       .map((c, i) => `<tr>
         <td>${i + 1}</td>
         <td><span class="pill ${c.kind === "quota" ? "dead" : "warn"}">${escapeHtml(c.kind_name)}</span></td>
         <td>${escapeHtml(c.description)}</td>
-        <td><code>${escapeHtml(JSON.stringify(c.detail))}</code></td>
+        <td>${escapeHtml(formatDetail(c))}</td>
       </tr>`).join("");
   }
 }

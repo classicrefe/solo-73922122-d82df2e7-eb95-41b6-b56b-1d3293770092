@@ -117,3 +117,5 @@ pre {
   background: #111827; color: #e5e7eb; padding: 16px; border-radius: 8px;
   overflow: auto; max-height: 480px; font-size: 12px;
 }
+.banner.err { background: #fee2e2; border-color: #b91c1c; color: #7f1d1d; }
+.pill.warn { background: #fef3c7; color: #92400e; }

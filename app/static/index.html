@@ -30,6 +30,15 @@
 
 <!-- ======================= Tab 1 数据 ======================= -->
 <section class="panel active" id="tab-data">
+  <h2>演示：亲属传递冲突与更正</h2>
+  <p class="hint" id="demoDesc">载入演示数据会替换当前病例、亲属、配额与锁定（均通过正常 API 写入，
+    遵循同样的校验与失效规则）。</p>
+  <div class="row">
+    <button class="primary" onclick="loadDemo()">载入演示数据（制造无解）</button>
+    <button id="demoFixBtn" class="hidden" onclick="applyDemoFix()">应用更正：仅保留 B–C 亲属对</button>
+    <span id="demoMsg" class="msg"></span>
+  </div>
+
   <h2>1. 上传病例 CSV</h2>
   <p class="hint">列：<code>病例号, 患者号, 标签</code>（标签仅 0/1），至多 200 行。
     <a href="#" id="tplCases">下载病例模板</a></p>
@@ -141,10 +150,17 @@
 
   <div id="unsatBox" class="hidden">
     <h2>无解：不可再缩减的冲突条件</h2>
-    <p class="hint">以下每条约束都是导致无解的必要条件——删除其中任意一条，其余约束即可满足。
+    <p class="hint" id="unsatHint">以下每条约束都是导致无解的必要条件——删除其中任意一条，其余所列条件即可满足。
       冲突可能同时涵盖配额、锁定、亲属/同患者关系。没有“近似比例”替代方案。</p>
     <div id="unsatSummary" class="banner warn"></div>
-    <div class="table-wrap">
+    <div class="row" id="unsatVerify"></div>
+    <div class="row">
+      <button id="demoFixBtnSolve" class="primary hidden" onclick="applyDemoFix()">
+        这是演示场景：应用更正（仅保留 B–C 亲属对）并重新求解
+      </button>
+    </div>
+    <p class="hint">说明：亲属条件严格对应原始亲属 CSV 中的患者对，并列出双方实际引用的病例；
+      同一患者的多个病例由“同患者”条件单独约束。若报告未标注“已独立核验”，则不能将其视为已验证的冲突集。</p>    <div class="table-wrap">
       <table id="conflictTable"><thead>
         <tr><th>#</th><th>来源类型</th><th>冲突条件说明</th><th>详情</th></tr>
       </thead><tbody></tbody></table>

@@ -129,6 +129,41 @@ def get_state():
         "patient_count": len({c.patient_id for c in active.cases}),
         "input": active.to_json(),
         "manifests": db.list_manifests(),
+        "demo": demo_definition(),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 演示数据：四名患者各一例标签 1，A–B、B–C 相连，A/C 锁定到不同组，
+# 两组各需两例。仅保留 B–C 亲属关系时切分可行（另两组可用 D 配对）。
+# 该定义只返回给前端做一键演示，不写入当前数据；真正的写入仍走
+# 上传/配额/锁定 API，演示按钮同样受版本失效与校验规则约束。
+# --------------------------------------------------------------------------- #
+def demo_definition() -> dict:
+    return {
+        "name": "亲属传递冲突演示",
+        "description": (
+            "四名患者 A/B/C/D 各一例标签 1；亲属对 A–B、B–C 传递相连；"
+            "锁定 A→训练集、C→评估集；两组各需 2 例标签 1。"
+        ),
+        "cases_csv": "病例号,患者号,标签\nA,A,1\nB,B,1\nC,C,1\nD,D,1\n",
+        "relatives_csv": "患者A,患者B\nA,B\nB,C\n",
+        # 仅保留 B–C（去掉 A–B）时的可行替代关系
+        "relatives_after_fix_csv": "患者A,患者B\nB,C\n",
+        "quotas": {"g1_label0": 0, "g1_label1": 2, "g2_label0": 0, "g2_label1": 2},
+        "locks": [
+            {"case_id": "A", "group": 1},
+            {"case_id": "C", "group": 2},
+        ],
+        # 更正后（仅保留 B–C）的可行切分：A→训练集，B 与 C→评估集，D→训练集
+        "fix_result": {"A": 1, "B": 2, "C": 2, "D": 1},
+        "expected": {
+            "status": "unsat",
+            "conflict_kinds": ["kinship", "lock"],
+            "kinship_pairs": [["A", "B"], ["B", "C"]],
+            "lock_cases": {"A": 1, "C": 2},
+            "fix": "把亲属 CSV 改成只保留 B–C 后重新上传并求解，应得到可行切分",
+        },
     }
 
 
